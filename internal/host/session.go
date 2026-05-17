@@ -30,7 +30,6 @@ import (
 	"syscall"
 
 	"github.com/creack/pty"
-	"github.com/nbardavid/control/internal/compress"
 	"github.com/nbardavid/control/internal/proto"
 	"golang.org/x/term"
 )
@@ -58,8 +57,7 @@ var defaultSize = &pty.Winsize{Cols: 80, Rows: 24}
 
 // Run pilote la session côté host. Bloque jusqu'à la fin du shell ou de la conn.
 func Run(ctx context.Context, conn net.Conn, opts Options) error {
-	conn, err := exchangeMeta(conn, opts)
-	if err != nil {
+	if err := exchangeMeta(conn, opts); err != nil {
 		return err
 	}
 
@@ -185,49 +183,36 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 }
 
 // exchangeMeta : lit la meta du client, appelle OnPeerMeta, envoie notre meta.
-// Retourne la conn éventuellement upgrade en compression si les deux peers
-// supportent la feature "deflate".
-func exchangeMeta(conn net.Conn, opts Options) (net.Conn, error) {
+func exchangeMeta(conn net.Conn, opts Options) error {
 	t, payload, err := proto.Read(conn)
 	if err != nil {
-		return nil, fmt.Errorf("read peer meta: %w", err)
+		return fmt.Errorf("read peer meta: %w", err)
 	}
 	if t != proto.FrameMeta {
-		return nil, fmt.Errorf("expected FrameMeta from client, got 0x%02x", t)
+		return fmt.Errorf("expected FrameMeta from client, got 0x%02x", t)
 	}
 	peerMeta, err := proto.ParseMeta(payload)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if opts.OnPeerMeta != nil && !opts.OnPeerMeta(peerMeta) {
 		_ = proto.Write(conn, proto.FrameClose, nil)
-		return nil, ErrPeerRefused
+		return ErrPeerRefused
 	}
 
 	meta, err := selfMeta(opts.Write)
 	if err != nil {
-		return nil, fmt.Errorf("collect meta: %w", err)
+		return fmt.Errorf("collect meta: %w", err)
 	}
 	mb, err := meta.Bytes()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := proto.Write(conn, proto.FrameMeta, mb); err != nil {
-		return nil, fmt.Errorf("send meta: %w", err)
+		return fmt.Errorf("send meta: %w", err)
 	}
-
-	// Negotiation : compression activée seulement si les deux côtés l'annoncent.
-	// Doit se faire APRÈS l'échange de meta : tous les bytes de meta sont en clair,
-	// le wrap compressé commence à partir d'ici.
-	if peerMeta.HasFeature(proto.FeatureDeflate) && meta.HasFeature(proto.FeatureDeflate) {
-		cc, err := compress.Wrap(conn)
-		if err != nil {
-			return nil, fmt.Errorf("compress wrap: %w", err)
-		}
-		return cc, nil
-	}
-	return conn, nil
+	return nil
 }
 
 // ptyFanOut : lit le PTY et écrit chaque chunk sur localStdout (si non nil)
@@ -343,12 +328,7 @@ func selfMeta(write bool) (proto.Meta, error) {
 	if err != nil {
 		hn = "unknown"
 	}
-	return proto.Meta{
-		User:     u.Username,
-		Host:     hn,
-		Write:    write,
-		Features: []string{proto.FeatureDeflate},
-	}, nil
+	return proto.Meta{User: u.Username, Host: hn, Write: write}, nil
 }
 
 func ignoreEOF(err error) error {
