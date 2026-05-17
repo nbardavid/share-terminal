@@ -11,8 +11,7 @@ on:
 # ton VPS — édite la valeur ci-dessous AVANT de tagger la première release.
 
 env:
-  # → ÉDITE CETTE VALEUR pour pointer vers ton relay :
-  DEFAULT_RELAY: wss://relay.example.com
+  DEFAULT_RELAY: wss://relay.nbardavid.dev
 
 jobs:
   build:
