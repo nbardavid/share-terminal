@@ -32,8 +32,13 @@ import (
 	"github.com/nbardavid/control/internal/host"
 	"github.com/nbardavid/control/internal/pairing"
 	"github.com/nbardavid/control/internal/proto"
+	"github.com/nbardavid/control/internal/update"
 	"github.com/spf13/cobra"
 )
+
+// version est injectée au build via ldflags ("-X main.version=v0.1.0").
+// Valeur par défaut "dev" pour les builds locaux.
+var version = "dev"
 
 // defaultRelay est l'URL utilisée si ni --relay ni $CONTROL_RELAY ne sont
 // fournis. Surchargeable au build pour shipper un binaire qui pointe
@@ -49,19 +54,34 @@ var defaultRelay = "ws://localhost:8080"
 
 func main() {
 	root := &cobra.Command{
-		Use:   "control",
-		Short: "Partage de terminal CLI via relay (E2E chiffré).",
+		Use:     "control",
+		Short:   "Partage de terminal CLI via relay (E2E chiffré).",
+		Version: version,
 		Long: `control partage interactivement un terminal entre deux machines via un
 relay. Inspiré de croc (pairing par code 3 mots) et de tmate (le host
 voit son propre shell, le client le suit en temps réel).
 
 Le relay est choisi dans cet ordre :
-  --relay / -r URL  >  $CONTROL_RELAY  >  ` + defaultRelay + ` (dev local)`,
+  --relay / -r URL  >  $CONTROL_RELAY  >  ` + defaultRelay,
 	}
-	root.AddCommand(newShareCmd(), newJoinCmd())
+	root.AddCommand(newShareCmd(), newJoinCmd(), newUpdateCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "erreur:", err)
 		os.Exit(1)
+	}
+}
+
+// --- update ---
+
+func newUpdateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update",
+		Short: "Met à jour control depuis la dernière GitHub Release.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+			return update.Run(ctx, version)
+		},
 	}
 }
 

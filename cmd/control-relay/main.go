@@ -25,15 +25,24 @@ import (
 	"github.com/nbardavid/control/internal/relay"
 )
 
+// version est injectée au build via ldflags.
+var version = "dev"
+
 func main() {
 	certFile := flag.String("tls-cert", "", "fichier de certificat TLS (active TLS si fourni)")
 	keyFile := flag.String("tls-key", "", "fichier de clé privée TLS")
+	showVersion := flag.Bool("version", false, "affiche la version et quitte")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [port] [--tls-cert FILE --tls-key FILE]\n", os.Args[0])
 		fmt.Fprintln(os.Stderr, "  port : :8080 (défaut), :443, 9000, ...")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("control-relay", version)
+		return
+	}
 
 	addr := normalizeAddr(":8080")
 	if a := flag.Arg(0); a != "" {

@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Cross-compile pour Linux + macOS (amd64 et arm64), crée une GitHub Release
+# avec les 8 binaires + un checksums.txt. Le binaire `control` est buildé
+# avec DEFAULT_RELAY hardcodé via ldflags pour qu'il pointe directement vers
+# ton VPS — édite la valeur ci-dessous AVANT de tagger la première release.
+
+env:
+  # → ÉDITE CETTE VALEUR pour pointer vers ton relay :
+  DEFAULT_RELAY: wss://relay.example.com
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: linux,  goarch: amd64 }
+          - { goos: linux,  goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build binaires
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -e
+          VERSION="${GITHUB_REF#refs/tags/}"
+          mkdir -p dist
+
+          # control : binaire client. ldflags injecte la version + l'URL du relay.
+          go build -trimpath \
+            -ldflags="-s -w -X main.version=${VERSION} -X main.defaultRelay=${DEFAULT_RELAY}" \
+            -o "dist/control-${GOOS}-${GOARCH}" \
+            ./cmd/control
+
+          # control-relay : binaire serveur. Pas besoin de defaultRelay côté serveur.
+          go build -trimpath \
+            -ldflags="-s -w -X main.version=${VERSION}" \
+            -o "dist/control-relay-${GOOS}-${GOARCH}" \
+            ./cmd/control-relay
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bins-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          retention-days: 1
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Compute SHA-256 checksums
+        run: |
+          cd dist
+          sha256sum control-* control-relay-* > checksums.txt
+          cat checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/control-*
+            dist/control-relay-*
+            dist/checksums.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
