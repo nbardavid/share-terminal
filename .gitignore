@@ -1,0 +1,14 @@
+# Binaires compilés
+/bin/
+*.test
+*.out
+
+# Couverture
+coverage.txt
+
+# Éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
