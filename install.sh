@@ -2,7 +2,7 @@
 # install.sh — installe `control` depuis la dernière GitHub Release.
 #
 # Usage :
-#   curl -sSf https://raw.githubusercontent.com/nbardavid/share-terminal/main/install.sh | sh
+#   curl -sSfL https://github.com/nbardavid/share-terminal/releases/latest/download/install.sh | sh
 #
 # Par défaut, installe dans ~/.local/bin (pas de sudo). Si ce répertoire
 # n'est pas dans ton PATH, le script te dit quoi ajouter à ton shell rc.

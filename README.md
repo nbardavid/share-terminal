@@ -11,7 +11,7 @@ The relay never sees plaintext — it's just a rendezvous point.
 ## Install
 
 ```bash
-curl -sSf https://github.com/nbardavid/share-terminal/releases/latest/download/install.sh | sh
+curl -sSfL https://github.com/nbardavid/share-terminal/releases/latest/download/install.sh | sh
 ```
 
 Installs into `~/.local/bin` (no sudo). If that directory isn't in your
