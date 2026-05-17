@@ -4,15 +4,18 @@
 # Usage :
 #   curl -sSf https://raw.githubusercontent.com/nbardavid/share-terminal/main/install.sh | sh
 #
+# Par défaut, installe dans ~/.local/bin (pas de sudo). Si ce répertoire
+# n'est pas dans ton PATH, le script te dit quoi ajouter à ton shell rc.
+#
 # Variables d'environnement supportées :
-#   INSTALL_DIR=/path   # défaut : /usr/local/bin (sudo si pas writable)
-#   VERSION=vX.Y.Z      # défaut : dernière release ("latest")
+#   INSTALL_DIR=/path    # défaut : ~/.local/bin
+#   VERSION=vX.Y.Z       # défaut : dernière release ("latest")
 
 set -eu
 
 REPO="nbardavid/share-terminal"
 BIN="control"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 VERSION="${VERSION:-latest}"
 
 # --- détection OS / arch ---
@@ -50,7 +53,7 @@ if ! curl -fsSL "${URL}" -o "${TMP}"; then
     exit 1
 fi
 
-# --- vérification SHA-256 (best-effort, n'échoue pas si checksums.txt absent) ---
+# --- vérification SHA-256 ---
 if curl -fsSL "${CHECKSUM_URL}" -o "${TMP}.sum" 2>/dev/null; then
     EXPECTED="$(grep " ${ASSET}\$" "${TMP}.sum" | awk '{print $1}' || true)"
     if [ -n "${EXPECTED}" ]; then
@@ -62,7 +65,7 @@ if curl -fsSL "${CHECKSUM_URL}" -o "${TMP}.sum" 2>/dev/null; then
             GOT=""
         fi
         if [ -n "${GOT}" ] && [ "${GOT}" != "${EXPECTED}" ]; then
-            echo "Checksum SHA-256 incorrect ! Le fichier téléchargé est corrompu ou compromis." >&2
+            echo "Checksum SHA-256 incorrect ! Fichier corrompu ou compromis." >&2
             echo "  attendu : ${EXPECTED}" >&2
             echo "  obtenu  : ${GOT}" >&2
             exit 1
@@ -75,27 +78,44 @@ fi
 
 chmod +x "${TMP}"
 
-# --- installation ---
+# --- installation (pas de sudo : on écrit dans le home) ---
+mkdir -p "${INSTALL_DIR}"
 DEST="${INSTALL_DIR}/${BIN}"
-echo "→ Installation dans ${DEST}..."
-
-if [ -w "${INSTALL_DIR}" ]; then
-    mv "${TMP}" "${DEST}"
-elif command -v sudo >/dev/null 2>&1; then
-    echo "  (sudo requis pour écrire dans ${INSTALL_DIR})"
-    sudo mv "${TMP}" "${DEST}"
-else
-    echo "Pas les droits sur ${INSTALL_DIR} et pas de sudo." >&2
-    echo "Réessaye avec INSTALL_DIR=~/.local/bin :" >&2
-    echo "  curl -sSf https://raw.githubusercontent.com/${REPO}/main/install.sh | INSTALL_DIR=~/.local/bin sh" >&2
-    exit 1
-fi
-
-# Empêcher le trap de supprimer un fichier maintenant déplacé
+mv "${TMP}" "${DEST}"
 trap - EXIT INT TERM
 
-echo "✓ control installé."
-echo
-"${DEST}" --version || true
-echo
-echo "Lance \`control --help\` pour commencer."
+echo "✓ Installé : ${DEST}"
+
+# --- check PATH et conseille en fonction du shell ---
+case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*)
+        echo
+        "${DEST}" --version
+        echo
+        echo "Prêt. Tape \`control --help\` pour commencer."
+        ;;
+    *)
+        echo
+        echo "⚠  ${INSTALL_DIR} n'est pas dans ton \$PATH."
+        echo "   Ajoute cette ligne à ton fichier de config shell :"
+        echo
+        SHELL_NAME="$(basename "${SHELL:-sh}")"
+        case "${SHELL_NAME}" in
+            bash)
+                echo "       echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
+                ;;
+            zsh)
+                echo "       echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc && source ~/.zshrc"
+                ;;
+            fish)
+                echo "       fish_add_path \$HOME/.local/bin"
+                ;;
+            *)
+                echo "       export PATH=\"\$HOME/.local/bin:\$PATH\""
+                echo "   (à ajouter au fichier rc de ${SHELL_NAME})"
+                ;;
+        esac
+        echo
+        echo "   Ou lance le binaire directement : ${DEST} --help"
+        ;;
+esac
