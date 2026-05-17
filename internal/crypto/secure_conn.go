@@ -60,19 +60,15 @@ const curve = "siec"
 // Wrap exécute le handshake PAKE puis retourne une net.Conn chiffrée et
 // l'empreinte hex courte (16 caractères) de la clé de session.
 //
-// Le handshake doit aboutir dans HandshakeTimeout (ou le deadline du ctx
-// fourni, si plus court), sinon Wrap renvoie une erreur et la conn est
-// dans un état indéterminé (le caller doit la fermer).
+// Important sur le timing du handshake : le host appelle Wrap dès qu'il s'est
+// connecté au relay, AVANT qu'un peer ne se présente. Le premier read peut
+// donc bloquer arbitrairement (jusqu'au pairingTimeout côté relay, 10 min).
+// On n'arme HandshakeTimeout (30s) qu'après réception du premier message du
+// peer — à partir de ce moment-là le handshake doit aboutir vite. Cela évite
+// que le deadline expire pendant l'attente du peer.
 func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn, string, error) {
-	deadline := time.Now().Add(HandshakeTimeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
-	if err := conn.SetDeadline(deadline); err != nil {
-		return nil, "", fmt.Errorf("set handshake deadline: %w", err)
-	}
-	// Si le ctx est annulé pendant le handshake, on force la conn à
-	// échouer immédiatement (deadline passée → Read/Write retourne aussitôt).
+	// Goroutine d'avortement : si ctx est annulé (SIGINT etc), on force la
+	// conn à échouer immédiatement même si on est en train d'attendre un peer.
 	abortCh := make(chan struct{})
 	defer close(abortCh)
 	go func() {
@@ -83,6 +79,16 @@ func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn,
 		}
 	}()
 
+	// armDeadline : à appeler une fois qu'on a la preuve qu'un peer est en
+	// face (premier read réussi). À partir de là, le handshake est borné.
+	armDeadline := func() error {
+		d := time.Now().Add(HandshakeTimeout)
+		if cd, ok := ctx.Deadline(); ok && cd.Before(d) {
+			d = cd
+		}
+		return conn.SetDeadline(d)
+	}
+
 	p, err := pake.InitCurve(code, int(role), curve)
 	if err != nil {
 		return nil, "", fmt.Errorf("pake init: %w", err)
@@ -91,20 +97,33 @@ func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn,
 	// Protocole : A envoie ses bytes ; B les Update et renvoie ses bytes ;
 	// A les Update. Ensuite SessionKey() converge des deux côtés.
 	if role == RoleHost {
+		// Le write est non-bloquant côté wire (bufferisé par le WS jusqu'au
+		// pairing). On ne pose pas de deadline ici.
 		if err := writeMsg(conn, p.Bytes()); err != nil {
 			return nil, "", fmt.Errorf("pake send: %w", err)
 		}
+		// Ce read peut attendre longtemps si le peer n'est pas encore là.
+		// Pas de deadline — relay s'occupe d'éjecter après pairingTimeout.
 		peer, err := readMsg(conn)
 		if err != nil {
 			return nil, "", fmt.Errorf("pake recv: %w", err)
+		}
+		// Peer présent : maintenant on borne la suite du handshake.
+		if err := armDeadline(); err != nil {
+			return nil, "", fmt.Errorf("arm handshake deadline: %w", err)
 		}
 		if err := p.Update(peer); err != nil {
 			return nil, "", fmt.Errorf("pake update: %w", err)
 		}
 	} else {
+		// Côté client : on lit d'abord ce que le host a déjà mis en file.
+		// Peut attendre si le host n'est pas encore arrivé côté relay.
 		peer, err := readMsg(conn)
 		if err != nil {
 			return nil, "", fmt.Errorf("pake recv: %w", err)
+		}
+		if err := armDeadline(); err != nil {
+			return nil, "", fmt.Errorf("arm handshake deadline: %w", err)
 		}
 		if err := p.Update(peer); err != nil {
 			return nil, "", fmt.Errorf("pake update: %w", err)
