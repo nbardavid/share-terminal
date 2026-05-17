@@ -23,6 +23,7 @@ import (
 	"os/user"
 	"syscall"
 
+	"github.com/nbardavid/control/internal/compress"
 	"github.com/nbardavid/control/internal/proto"
 	"golang.org/x/term"
 )
@@ -81,6 +82,17 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 	}
 	if opts.OnMeta != nil {
 		opts.OnMeta(meta)
+	}
+
+	// Négociation : compression activée si les deux côtés annoncent "deflate".
+	// Tous les bytes de meta étaient en clair ; à partir d'ici on bascule
+	// (les deux peers font la bascule au même point logique du protocole).
+	if meta.HasFeature(proto.FeatureDeflate) && me.HasFeature(proto.FeatureDeflate) {
+		cc, err := compress.Wrap(conn)
+		if err != nil {
+			return fmt.Errorf("compress wrap: %w", err)
+		}
+		conn = cc
 	}
 
 	// 2. Raw mode sur stdin (avec restore garanti).
@@ -204,5 +216,9 @@ func selfMeta() (proto.Meta, error) {
 	if err != nil {
 		host = "unknown"
 	}
-	return proto.Meta{User: u.Username, Host: host}, nil
+	return proto.Meta{
+		User:     u.Username,
+		Host:     host,
+		Features: []string{proto.FeatureDeflate},
+	}, nil
 }
