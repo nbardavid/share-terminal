@@ -80,12 +80,16 @@ jobs:
           sha256sum control-* control-relay-* > checksums.txt
           cat checksums.txt
 
+      - name: Copy install.sh to release assets
+        run: cp install.sh dist/install.sh
+
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/control-*
             dist/control-relay-*
             dist/checksums.txt
+            dist/install.sh
           generate_release_notes: true
           draft: false
           prerelease: false
