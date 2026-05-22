@@ -1,10 +1,10 @@
 package pairing
 
-// wordlist : 256 mots courts (4-7 caractères), faciles à dicter, sans
-// homophones évidents entre eux. Sert à composer les codes de pairing 3 mots.
-// Avec 3 mots tirés indépendamment : 256^3 ≈ 16,7 millions de combinaisons,
-// largement suffisant combiné à PAKE (1 tentative/connexion) et à un code
-// qui expire au bout de 10 minutes.
+// wordlist: 256 short words (4-7 characters), easy to dictate, no obvious
+// homophones between them. Used to build the 3-word pairing codes.
+// With 3 independent draws: 256^3 ~= 16.7M combinations, more than enough
+// when combined with PAKE (1 attempt per connection) and a code that
+// expires after 10 minutes.
 var wordlist = [256]string{
 	"amber", "anchor", "apple", "april", "arrow", "atlas", "aspen", "autumn",
 	"azure", "bacon", "badge", "baker", "august", "banjo", "barley", "basil",

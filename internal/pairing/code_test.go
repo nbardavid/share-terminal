@@ -19,7 +19,7 @@ func TestGenerateRoundTrip(t *testing.T) {
 }
 
 func TestNormalize(t *testing.T) {
-	// Choisit trois mots qu'on sait être dans la liste.
+	// Pick three words we know are in the list.
 	code := wordlist[0] + "-" + wordlist[1] + "-" + wordlist[2]
 
 	cases := []string{
@@ -46,7 +46,7 @@ func TestValidateRejects(t *testing.T) {
 		"",
 		"only-two",
 		"one-two-three-four",
-		"meteor-cobalt-pasunmotdelaliste",
+		"meteor-cobalt-notinthelist",
 	}
 	for _, c := range bad {
 		if err := Validate(c); err == nil {

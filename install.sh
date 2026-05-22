@@ -1,15 +1,15 @@
 #!/bin/sh
-# install.sh — installe `control` depuis la dernière GitHub Release.
+# install.sh — installs `control` from the latest GitHub Release.
 #
-# Usage :
+# Usage:
 #   curl -sSfL https://github.com/nbardavid/share-terminal/releases/latest/download/install.sh | sh
 #
-# Par défaut, installe dans ~/.local/bin (pas de sudo). Si ce répertoire
-# n'est pas dans ton PATH, le script te dit quoi ajouter à ton shell rc.
+# Installs into ~/.local/bin by default (no sudo). If that directory is not
+# in your PATH, the script tells you the line to add to your shell rc.
 #
-# Variables d'environnement supportées :
-#   INSTALL_DIR=/path    # défaut : ~/.local/bin
-#   VERSION=vX.Y.Z       # défaut : dernière release ("latest")
+# Supported environment variables:
+#   INSTALL_DIR=/path    # default: ~/.local/bin
+#   VERSION=vX.Y.Z       # default: latest release ("latest")
 
 set -eu
 
@@ -18,19 +18,19 @@ BIN="control"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 VERSION="${VERSION:-latest}"
 
-# --- détection OS / arch ---
+# --- OS / arch detection ---
 OS="$(uname -s)"
 case "${OS}" in
     Linux*)  OS=linux ;;
     Darwin*) OS=darwin ;;
-    *) echo "OS non supporté : ${OS}" >&2; exit 1 ;;
+    *) echo "Unsupported OS: ${OS}" >&2; exit 1 ;;
 esac
 
 ARCH="$(uname -m)"
 case "${ARCH}" in
     x86_64|amd64)  ARCH=amd64 ;;
     aarch64|arm64) ARCH=arm64 ;;
-    *) echo "Architecture non supportée : ${ARCH}" >&2; exit 1 ;;
+    *) echo "Unsupported architecture: ${ARCH}" >&2; exit 1 ;;
 esac
 
 ASSET="${BIN}-${OS}-${ARCH}"
@@ -43,17 +43,17 @@ else
     CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
 fi
 
-# --- téléchargement ---
+# --- download ---
 TMP="$(mktemp -t control-install.XXXXXX)"
 trap 'rm -f "${TMP}" "${TMP}.sum"' EXIT INT TERM
 
-echo "→ Téléchargement de ${ASSET}..."
+echo "-> Downloading ${ASSET}..."
 if ! curl -fsSL "${URL}" -o "${TMP}"; then
-    echo "Échec du téléchargement depuis ${URL}" >&2
+    echo "Download failed from ${URL}" >&2
     exit 1
 fi
 
-# --- vérification SHA-256 ---
+# --- SHA-256 verification ---
 if curl -fsSL "${CHECKSUM_URL}" -o "${TMP}.sum" 2>/dev/null; then
     EXPECTED="$(grep " ${ASSET}\$" "${TMP}.sum" | awk '{print $1}' || true)"
     if [ -n "${EXPECTED}" ]; then
@@ -65,39 +65,39 @@ if curl -fsSL "${CHECKSUM_URL}" -o "${TMP}.sum" 2>/dev/null; then
             GOT=""
         fi
         if [ -n "${GOT}" ] && [ "${GOT}" != "${EXPECTED}" ]; then
-            echo "Checksum SHA-256 incorrect ! Fichier corrompu ou compromis." >&2
-            echo "  attendu : ${EXPECTED}" >&2
-            echo "  obtenu  : ${GOT}" >&2
+            echo "SHA-256 mismatch! File is corrupt or has been tampered with." >&2
+            echo "  expected: ${EXPECTED}" >&2
+            echo "  got:      ${GOT}" >&2
             exit 1
         fi
         if [ -n "${GOT}" ]; then
-            echo "✓ SHA-256 vérifié."
+            echo "SHA-256 verified."
         fi
     fi
 fi
 
 chmod +x "${TMP}"
 
-# --- installation (pas de sudo : on écrit dans le home) ---
+# --- install (no sudo: writes into the home directory) ---
 mkdir -p "${INSTALL_DIR}"
 DEST="${INSTALL_DIR}/${BIN}"
 mv "${TMP}" "${DEST}"
 trap - EXIT INT TERM
 
-echo "✓ Installé : ${DEST}"
+echo "Installed: ${DEST}"
 
-# --- check PATH et conseille en fonction du shell ---
+# --- PATH check, advise per shell ---
 case ":${PATH}:" in
     *":${INSTALL_DIR}:"*)
         echo
         "${DEST}" --version
         echo
-        echo "Prêt. Tape \`control --help\` pour commencer."
+        echo "Ready. Run \`control --help\` to get started."
         ;;
     *)
         echo
-        echo "⚠  ${INSTALL_DIR} n'est pas dans ton \$PATH."
-        echo "   Ajoute cette ligne à ton fichier de config shell :"
+        echo "${INSTALL_DIR} is not in your \$PATH."
+        echo "   Add this line to your shell config:"
         echo
         SHELL_NAME="$(basename "${SHELL:-sh}")"
         case "${SHELL_NAME}" in
@@ -112,10 +112,10 @@ case ":${PATH}:" in
                 ;;
             *)
                 echo "       export PATH=\"\$HOME/.local/bin:\$PATH\""
-                echo "   (à ajouter au fichier rc de ${SHELL_NAME})"
+                echo "   (add to the rc file of ${SHELL_NAME})"
                 ;;
         esac
         echo
-        echo "   Ou lance le binaire directement : ${DEST} --help"
+        echo "   Or run the binary directly: ${DEST} --help"
         ;;
 esac

@@ -1,9 +1,9 @@
-// Package relay : serveur d'appariement par code court.
+// Package relay: short-code pairing server.
 //
-// Le relay ne déchiffre rien et n'inspecte pas le payload : il maintient une
-// map des codes en attente et, dès que deux peers présentent le même code, il
-// splice les deux connexions WebSocket en un tube bidirectionnel jusqu'à ce
-// que l'un des deux ferme.
+// The relay decrypts nothing and does not inspect the payload: it keeps a
+// map of pending codes, and as soon as two peers present the same code it
+// splices the two WebSocket connections into a bidirectional pipe until
+// one side closes.
 package relay
 
 import (
@@ -21,18 +21,18 @@ import (
 const (
 	pairingTimeout = 10 * time.Minute
 	helloTimeout   = 10 * time.Second
-	// readLimit : taille max d'un message WS lu. Doit être >= la taille max
-	// d'une frame AEAD écrite par internal/crypto (qui chunk à ~64 KiB).
-	// On met 1 MiB pour une marge confortable.
+	// readLimit: max size of a WS message read. Must be >= the max AEAD
+	// frame size written by internal/crypto (which chunks at ~64 KiB).
+	// 1 MiB leaves a comfortable margin.
 	readLimit = 1 << 20
-	// maxWaiting : nombre max de sessions en attente d'un peer. Au-delà, on
-	// rejette les nouvelles connexions pour éviter qu'un attaquant n'épuise
-	// la mémoire en ouvrant des milliers de connexions oisives.
+	// maxWaiting: max number of sessions waiting for a peer. Beyond this,
+	// new connections are rejected so an attacker can't exhaust memory by
+	// opening thousands of idle connections.
 	defaultMaxWaiting = 1024
 )
 
-// Server est un http.Handler qui accepte les connexions WebSocket et les
-// apparie par code court (envoyé en premier message texte par chaque peer).
+// Server is an http.Handler that accepts WebSocket connections and pairs
+// them by short code (sent as the first text message by each peer).
 type Server struct {
 	mu      sync.Mutex
 	waiting map[string]*pending
@@ -42,8 +42,8 @@ type Server struct {
 
 type pending struct {
 	conn   *websocket.Conn
-	paired chan *websocket.Conn // le second peer dépose sa conn ici
-	done   chan struct{}        // fermé quand le splice est terminé
+	paired chan *websocket.Conn // the second peer drops its conn here
+	done   chan struct{}        // closed when the splice is done
 }
 
 func NewServer() *Server {
@@ -53,8 +53,8 @@ func NewServer() *Server {
 	}
 }
 
-// SetMaxWaiting ajuste la limite de sessions en attente (utile pour tests
-// ou environnements à charge connue).
+// SetMaxWaiting adjusts the waiting-session limit (useful for tests or
+// environments with a known load).
 func (s *Server) SetMaxWaiting(n int) {
 	s.mu.Lock()
 	s.maxWaiting = n
@@ -63,7 +63,7 @@ func (s *Server) SetMaxWaiting(n int) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // pas de browser CSRF à craindre pour un CLI
+		InsecureSkipVerify: true, // no browser CSRF concern for a CLI
 	})
 	if err != nil {
 		return
@@ -87,7 +87,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		log.Printf("pair  code=%s peer1=? peer2=%s — splicing", codeMask(code), peerAddr)
 		started := time.Now()
-		// Délivre notre conn au premier, attend que le splice se termine.
+		// Hand our conn off to the first peer, wait for the splice to end.
 		first.paired <- conn
 		<-first.done
 		log.Printf("end   code=%s duration=%s", codeMask(code), time.Since(started).Round(time.Second))
@@ -117,7 +117,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		splice(conn, other)
 	case <-time.After(pairingTimeout):
 		log.Printf("expire code=%s peer=%s after=%s", codeMask(code), peerAddr, pairingTimeout)
-		_ = conn.Close(websocket.StatusGoingAway, "timeout en attente d'un peer")
+		_ = conn.Close(websocket.StatusGoingAway, "timeout waiting for a peer")
 	case <-r.Context().Done():
 		_ = conn.Close(websocket.StatusGoingAway, "client gone")
 	}
@@ -131,7 +131,7 @@ func (s *Server) removeIfStillMine(code string, p *pending) {
 	}
 }
 
-// readHello attend le premier message texte de la conn : c'est le code de pairing.
+// readHello waits for the first text message on the conn: the pairing code.
 func readHello(ctx context.Context, conn *websocket.Conn) (string, error) {
 	typ, data, err := conn.Read(ctx)
 	if err != nil {
@@ -146,8 +146,8 @@ func readHello(ctx context.Context, conn *websocket.Conn) (string, error) {
 	return string(data), nil
 }
 
-// splice copie les bytes dans les deux sens entre deux conns WebSocket.
-// Quand l'un des côtés ferme, on ferme l'autre.
+// splice copies bytes in both directions between two WebSocket conns.
+// When one side closes, we close the other.
 func splice(a, b *websocket.Conn) {
 	ctx := context.Background()
 	ac := websocket.NetConn(ctx, a, websocket.MessageBinary)
@@ -161,9 +161,9 @@ func splice(a, b *websocket.Conn) {
 	_ = bc.Close()
 }
 
-// codeMask renvoie une version partielle du code pour les logs — on garde
-// les 3 premiers caractères et on masque le reste. Pas de fuite du code
-// dans les logs en cas de compromission.
+// codeMask returns a partial version of the code for logging — keep the
+// first 3 chars and mask the rest. No code leakage into the logs in case
+// of a host compromise.
 func codeMask(c string) string {
 	if len(c) <= 3 {
 		return "***"

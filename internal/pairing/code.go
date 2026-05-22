@@ -1,7 +1,7 @@
-// Package pairing : génération et parsing de codes courts à 3 mots.
+// Package pairing: generation and parsing of short 3-word codes.
 //
-// Format : trois mots minuscules séparés par "-", ex: "meteor-cobalt-jungle".
-// Les mots viennent d'une liste fixe de 256 entrées — voir wordlist.go.
+// Format: three lowercase words separated by "-", e.g. "meteor-cobalt-jungle".
+// Words come from a fixed list of 256 entries — see wordlist.go.
 package pairing
 
 import (
@@ -12,7 +12,7 @@ import (
 
 const Words = 3
 
-// Generate tire un nouveau code de 3 mots aléatoires (crypto/rand).
+// Generate draws a new 3-word code from crypto/rand.
 func Generate() string {
 	parts := make([]string, Words)
 	for i := range parts {
@@ -24,22 +24,23 @@ func Generate() string {
 func randIndex() uint8 {
 	var b [1]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand sur OS sain ne devrait jamais échouer ; si ça arrive
-		// on panique car continuer serait moins sûr.
+		// crypto/rand should never fail on a healthy OS; if it does we
+		// panic because continuing would be less safe.
 		panic(fmt.Sprintf("crypto/rand failure: %v", err))
 	}
 	return b[0]
 }
 
-// Validate vérifie qu'une chaîne a la forme word-word-word avec des mots de la liste.
+// Validate checks that a string has the form word-word-word and that each
+// word is in the list.
 func Validate(code string) error {
 	parts := strings.Split(code, "-")
 	if len(parts) != Words {
-		return fmt.Errorf("le code doit contenir %d mots séparés par '-' (reçu %d)", Words, len(parts))
+		return fmt.Errorf("code must contain %d words separated by '-' (got %d)", Words, len(parts))
 	}
 	for i, p := range parts {
 		if !inList(strings.ToLower(p)) {
-			return fmt.Errorf("mot %d inconnu : %q", i+1, p)
+			return fmt.Errorf("word %d unknown: %q", i+1, p)
 		}
 	}
 	return nil
@@ -54,11 +55,11 @@ func inList(w string) bool {
 	return false
 }
 
-// Normalize met le code en forme canonique (lowercase, séparateur '-').
-// Retourne une erreur si le code est invalide.
+// Normalize converts the code to canonical form (lowercase, '-' separator).
+// Returns an error if the code is invalid.
 func Normalize(code string) (string, error) {
 	code = strings.ToLower(strings.TrimSpace(code))
-	// Tolère espaces ou underscores comme séparateurs (cas d'usage : utilisateur dicte).
+	// Accept spaces or underscores as separators (use case: dictated codes).
 	code = strings.ReplaceAll(code, " ", "-")
 	code = strings.ReplaceAll(code, "_", "-")
 	if err := Validate(code); err != nil {
@@ -66,4 +67,3 @@ func Normalize(code string) (string, error) {
 	}
 	return code, nil
 }
-

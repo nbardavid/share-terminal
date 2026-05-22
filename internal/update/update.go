@@ -1,16 +1,16 @@
-// Package update : self-update du binaire `control` depuis GitHub Releases.
+// Package update: self-update of the `control` binary from GitHub Releases.
 //
-// Le flow :
-//  1. GET https://api.github.com/repos/.../releases/latest pour trouver le tag.
-//  2. Récupère l'asset matching `control-$GOOS-$GOARCH` et le checksums.txt.
-//  3. Télécharge l'asset dans un fichier temporaire à côté du binaire courant
-//     (même filesystem, donc rename atomique garanti).
-//  4. Vérifie le SHA-256 contre la ligne correspondante dans checksums.txt.
-//  5. chmod +x puis os.Rename par-dessus le binaire courant.
+// Flow:
+//  1. GET https://api.github.com/repos/.../releases/latest to find the tag.
+//  2. Resolve the asset matching `control-$GOOS-$GOARCH` plus checksums.txt.
+//  3. Download the asset into a temp file next to the current binary
+//     (same filesystem, so atomic rename is guaranteed).
+//  4. Verify the SHA-256 against the matching line in checksums.txt.
+//  5. chmod +x then os.Rename over the current binary.
 //
-// Sur Linux et macOS, remplacer un binaire en cours d'exécution est OK :
-// le kernel garde l'inode original tant que le processus tourne, et la
-// prochaine invocation utilise le nouveau fichier.
+// On Linux and macOS, replacing a running binary is fine: the kernel
+// keeps the original inode while the process runs, and the next
+// invocation uses the new file.
 package update
 
 import (
@@ -33,7 +33,7 @@ const (
 	repo          = "nbardavid/share-terminal"
 	releasesAPI   = "https://api.github.com/repos/" + repo + "/releases/latest"
 	httpTimeout   = 30 * time.Second
-	downloadLimit = 100 << 20 // 100 MiB plafond par binaire — large pour Go binaries
+	downloadLimit = 100 << 20 // 100 MiB cap per binary — generous for Go binaries
 )
 
 type release struct {
@@ -49,7 +49,7 @@ type asset struct {
 	Size int64  `json:"size"`
 }
 
-// CheckLatest renvoie le tag de la dernière release publiée.
+// CheckLatest returns the tag of the latest published release.
 func CheckLatest(ctx context.Context) (string, error) {
 	r, err := fetchLatest(ctx)
 	if err != nil {
@@ -58,19 +58,19 @@ func CheckLatest(ctx context.Context) (string, error) {
 	return r.TagName, nil
 }
 
-// Run récupère la dernière release, télécharge le binaire matching
-// GOOS/GOARCH, vérifie son SHA-256, et remplace le binaire courant.
-// currentVersion sert juste à afficher "tu es déjà à jour" si ça matche.
+// Run fetches the latest release, downloads the binary matching
+// GOOS/GOARCH, verifies its SHA-256, and replaces the current binary.
+// currentVersion is only used to print "already up to date" when it matches.
 func Run(ctx context.Context, currentVersion string) error {
 	r, err := fetchLatest(ctx)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Version courante : %s\nDernière release : %s\n", currentVersion, r.TagName)
+	fmt.Printf("Current version: %s\nLatest release:  %s\n", currentVersion, r.TagName)
 
 	if currentVersion != "" && currentVersion != "dev" && currentVersion == r.TagName {
-		fmt.Println("✓ Déjà à jour.")
+		fmt.Println("Already up to date.")
 		return nil
 	}
 
@@ -85,34 +85,34 @@ func Run(ctx context.Context, currentVersion string) error {
 		}
 	}
 	if binURL == "" {
-		return fmt.Errorf("aucun binaire pour %s/%s dans la release %s", runtime.GOOS, runtime.GOARCH, r.TagName)
+		return fmt.Errorf("no binary for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, r.TagName)
 	}
 
 	self, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("os.Executable: %w", err)
 	}
-	// Suit les symlinks pour qu'on remplace bien le vrai binaire,
-	// pas un raccourci genre /usr/local/bin/control → ~/.local/bin/control.
+	// Resolve symlinks so we replace the real binary, not something like
+	// /usr/local/bin/control → ~/.local/bin/control.
 	if real, err := filepath.EvalSymlinks(self); err == nil {
 		self = real
 	}
 
-	// Fichier temporaire dans le MÊME répertoire que le binaire courant :
-	// rename atomique garanti (même filesystem).
+	// Temp file in the SAME directory as the current binary: atomic
+	// rename is guaranteed (same filesystem).
 	tmp, err := os.CreateTemp(filepath.Dir(self), ".control-update-*")
 	if err != nil {
 		return fmt.Errorf("create temp: %w", err)
 	}
 	tmpPath := tmp.Name()
-	// Nettoyage en cas d'échec.
+	// Cleanup on failure.
 	cleanup := func() {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 	}
 	defer cleanup()
 
-	fmt.Printf("→ Téléchargement de %s...\n", target)
+	fmt.Printf("-> Downloading %s...\n", target)
 	if err := downloadTo(ctx, binURL, tmp); err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
@@ -122,15 +122,15 @@ func Run(ctx context.Context, currentVersion string) error {
 
 	if sumURL != "" {
 		if err := verifyChecksum(ctx, tmpPath, target, sumURL); err != nil {
-			return fmt.Errorf("vérification SHA-256 échouée : %w", err)
+			return fmt.Errorf("SHA-256 verification failed: %w", err)
 		}
-		fmt.Println("✓ SHA-256 vérifié.")
+		fmt.Println("SHA-256 verified.")
 	} else {
-		fmt.Println("⚠  Pas de checksums.txt dans la release — vérification SHA-256 sautée.")
+		fmt.Println("No checksums.txt in release — skipping SHA-256 verification.")
 	}
 
-	// Permissions du nouveau binaire = mêmes que celles du courant
-	// (généralement 0755). Important sur des installs sans exec bit par défaut.
+	// Permissions on the new binary = same as the current one (usually
+	// 0755). Important on installs without exec bit by default.
 	if info, err := os.Stat(self); err == nil {
 		_ = os.Chmod(tmpPath, info.Mode())
 	} else {
@@ -138,12 +138,12 @@ func Run(ctx context.Context, currentVersion string) error {
 	}
 
 	if err := os.Rename(tmpPath, self); err != nil {
-		return fmt.Errorf("remplacement du binaire (%s) : %w", self, err)
+		return fmt.Errorf("replace binary (%s): %w", self, err)
 	}
-	// Le fichier temp a été déplacé, plus rien à nettoyer.
+	// The temp file has been moved, nothing left to clean up.
 	cleanup = func() {}
 
-	fmt.Printf("✓ Mis à jour vers %s\n", r.TagName)
+	fmt.Printf("Updated to %s\n", r.TagName)
 	return nil
 }
 
@@ -164,7 +164,7 @@ func fetchLatest(ctx context.Context) (*release, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, errors.New("aucune release publiée pour ce repo (404)")
+		return nil, errors.New("no published release for this repo (404)")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("github API status %d", resp.StatusCode)
@@ -181,7 +181,7 @@ func fetchLatest(ctx context.Context) (*release, error) {
 }
 
 func downloadTo(ctx context.Context, url string, w io.Writer) error {
-	ctx, cancel := context.WithTimeout(ctx, httpTimeout*4) // un binaire peut être plus lent
+	ctx, cancel := context.WithTimeout(ctx, httpTimeout*4) // a binary can be slower
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -202,13 +202,13 @@ func downloadTo(ctx context.Context, url string, w io.Writer) error {
 }
 
 func verifyChecksum(ctx context.Context, file, name, sumURL string) error {
-	// Récupère checksums.txt.
+	// Fetch checksums.txt.
 	var sumBuf strings.Builder
 	if err := downloadTo(ctx, sumURL, stringWriter{&sumBuf}); err != nil {
 		return err
 	}
 
-	// Cherche la ligne "<sha256>  <name>".
+	// Look for the "<sha256>  <name>" line.
 	var expected string
 	for _, line := range strings.Split(sumBuf.String(), "\n") {
 		fields := strings.Fields(line)
@@ -218,10 +218,10 @@ func verifyChecksum(ctx context.Context, file, name, sumURL string) error {
 		}
 	}
 	if expected == "" {
-		return fmt.Errorf("pas de checksum pour %s dans checksums.txt", name)
+		return fmt.Errorf("no checksum for %s in checksums.txt", name)
 	}
 
-	// Hash du fichier téléchargé.
+	// Hash of the downloaded file.
 	f, err := os.Open(file)
 	if err != nil {
 		return err
@@ -234,12 +234,12 @@ func verifyChecksum(ctx context.Context, file, name, sumURL string) error {
 	got := hex.EncodeToString(h.Sum(nil))
 
 	if got != expected {
-		return fmt.Errorf("SHA-256 mismatch (attendu %s, obtenu %s)", expected, got)
+		return fmt.Errorf("SHA-256 mismatch (expected %s, got %s)", expected, got)
 	}
 	return nil
 }
 
-// stringWriter adapte un strings.Builder en io.Writer pour downloadTo.
+// stringWriter adapts a strings.Builder to io.Writer for downloadTo.
 type stringWriter struct{ b *strings.Builder }
 
 func (s stringWriter) Write(p []byte) (int, error) { return s.b.Write(p) }

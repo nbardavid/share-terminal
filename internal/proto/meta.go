@@ -5,13 +5,13 @@ import (
 	"fmt"
 )
 
-// Meta est la metadata envoyée par le host au client juste après le
-// handshake : qui partage, et dans quel mode. Encodée en JSON dans une
-// FrameMeta — pas critique en perf et bien plus lisible que du binaire serré.
+// Meta is the metadata sent by the host to the client right after the
+// handshake: who is sharing, and in what mode. Encoded as JSON inside a
+// FrameMeta — not perf-critical and much more readable than tight binary.
 type Meta struct {
 	User string `json:"user"`
 	Host string `json:"host"`
-	// Write indique si le host accepte la saisie clavier du client.
+	// Write reports whether the host accepts client keyboard input.
 	Write bool `json:"write"`
 }
 

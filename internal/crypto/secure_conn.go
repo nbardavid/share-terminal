@@ -1,15 +1,15 @@
-// Package crypto : handshake PAKE + chiffrement de stream AEAD.
+// Package crypto: PAKE handshake plus AEAD stream encryption.
 //
-// Wrap() exécute un handshake SPAKE2 (schollz/pake/v3) sur une net.Conn
-// quelconque en utilisant le code de pairing comme passphrase faible, puis
-// retourne une nouvelle net.Conn dont les écritures et lectures sont
-// chiffrées avec XChaCha20-Poly1305 et framées par préfixe de longueur.
+// Wrap() runs a SPAKE2 handshake (schollz/pake/v3) over an arbitrary
+// net.Conn using the pairing code as a weak passphrase, then returns a new
+// net.Conn whose reads and writes are encrypted with XChaCha20-Poly1305
+// and length-prefixed.
 //
-// Côté API : les deux pairs appellent Wrap avec le même code et des rôles
-// opposés (RoleHost / RoleClient). On récupère une net.Conn chiffrée et une
-// empreinte courte de la clé de session — à afficher aux deux côtés pour
-// permettre une vérification visuelle (très optionnelle car PAKE garantit
-// déjà l'authentification mutuelle via le code).
+// API: both peers call Wrap with the same code and opposite roles
+// (RoleHost / RoleClient). The result is an encrypted net.Conn and a short
+// fingerprint of the session key — display it on both sides to allow a
+// visual check (mostly optional, since PAKE already provides mutual
+// authentication via the code).
 package crypto
 
 import (
@@ -32,17 +32,17 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-// HandshakeTimeout est le délai max pour terminer le handshake PAKE +
-// confirmation HMAC. Un peer qui ne répond pas dans ce délai voit la
-// connexion fermée.
+// HandshakeTimeout is the maximum time allowed to complete the PAKE
+// handshake plus HMAC confirmation. A peer that doesn't respond within
+// this window has its connection closed.
 const HandshakeTimeout = 30 * time.Second
 
-// ErrCodeMismatch est retourné quand l'étape de confirmation montre que
-// les deux peers ont dérivé des clés différentes (= codes différents).
-var ErrCodeMismatch = errors.New("pairing code mismatch (codes différents ou peer hostile)")
+// ErrCodeMismatch is returned when the confirmation step shows the two
+// peers derived different keys (i.e. different codes).
+var ErrCodeMismatch = errors.New("pairing code mismatch (codes differ or hostile peer)")
 
-// Role indique qui initie le handshake. Le host (celui qui partage le
-// terminal) est l'initiateur, le client est le répondeur.
+// Role indicates who initiates the handshake. The host (the one sharing
+// the terminal) is the initiator, the client is the responder.
 type Role int
 
 const (
@@ -50,25 +50,25 @@ const (
 	RoleClient Role = 1
 )
 
-// maxFrame est la taille maximale d'une frame chiffrée transportée sur le wire.
-// Au-delà, on découpe l'écriture en plusieurs frames.
+// maxFrame is the maximum size of an encrypted frame on the wire. Larger
+// writes are split into multiple frames.
 const maxFrame = 64 * 1024
 
-// curve : siec donne le meilleur compromis perf/sécu d'après le README de pake/v3.
+// curve: siec gives the best perf/security trade-off per the pake/v3 README.
 const curve = "siec"
 
-// Wrap exécute le handshake PAKE puis retourne une net.Conn chiffrée et
-// l'empreinte hex courte (16 caractères) de la clé de session.
+// Wrap runs the PAKE handshake then returns an encrypted net.Conn and the
+// short hex fingerprint (16 chars) of the session key.
 //
-// Important sur le timing du handshake : le host appelle Wrap dès qu'il s'est
-// connecté au relay, AVANT qu'un peer ne se présente. Le premier read peut
-// donc bloquer arbitrairement (jusqu'au pairingTimeout côté relay, 10 min).
-// On n'arme HandshakeTimeout (30s) qu'après réception du premier message du
-// peer — à partir de ce moment-là le handshake doit aboutir vite. Cela évite
-// que le deadline expire pendant l'attente du peer.
+// Note on handshake timing: the host calls Wrap as soon as it has connected
+// to the relay, BEFORE a peer shows up. The first read can therefore block
+// arbitrarily (up to pairingTimeout on the relay side, 10 min). We only
+// arm HandshakeTimeout (30s) after receiving the first peer message — from
+// that point on the handshake must complete quickly. This prevents the
+// deadline from firing while waiting for a peer.
 func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn, string, error) {
-	// Goroutine d'avortement : si ctx est annulé (SIGINT etc), on force la
-	// conn à échouer immédiatement même si on est en train d'attendre un peer.
+	// Abort goroutine: if ctx is cancelled (SIGINT etc.), force the conn to
+	// fail immediately even if we're currently waiting on a peer.
 	abortCh := make(chan struct{})
 	defer close(abortCh)
 	go func() {
@@ -79,8 +79,8 @@ func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn,
 		}
 	}()
 
-	// armDeadline : à appeler une fois qu'on a la preuve qu'un peer est en
-	// face (premier read réussi). À partir de là, le handshake est borné.
+	// armDeadline: call this once we have evidence a peer is on the other
+	// end (first successful read). From then on the handshake is bounded.
 	armDeadline := func() error {
 		d := time.Now().Add(HandshakeTimeout)
 		if cd, ok := ctx.Deadline(); ok && cd.Before(d) {
@@ -94,21 +94,21 @@ func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn,
 		return nil, "", fmt.Errorf("pake init: %w", err)
 	}
 
-	// Protocole : A envoie ses bytes ; B les Update et renvoie ses bytes ;
-	// A les Update. Ensuite SessionKey() converge des deux côtés.
+	// Protocol: A sends its bytes; B Updates them and sends its own bytes;
+	// A Updates. Then SessionKey() converges on both sides.
 	if role == RoleHost {
-		// Le write est non-bloquant côté wire (bufferisé par le WS jusqu'au
-		// pairing). On ne pose pas de deadline ici.
+		// The write is non-blocking on the wire (buffered by the WS until
+		// pairing). No deadline here.
 		if err := writeMsg(conn, p.Bytes()); err != nil {
 			return nil, "", fmt.Errorf("pake send: %w", err)
 		}
-		// Ce read peut attendre longtemps si le peer n'est pas encore là.
-		// Pas de deadline — relay s'occupe d'éjecter après pairingTimeout.
+		// This read can wait a long time if the peer is not there yet.
+		// No deadline — the relay evicts after pairingTimeout.
 		peer, err := readMsg(conn)
 		if err != nil {
 			return nil, "", fmt.Errorf("pake recv: %w", err)
 		}
-		// Peer présent : maintenant on borne la suite du handshake.
+		// Peer is present: bound the rest of the handshake.
 		if err := armDeadline(); err != nil {
 			return nil, "", fmt.Errorf("arm handshake deadline: %w", err)
 		}
@@ -116,8 +116,8 @@ func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn,
 			return nil, "", fmt.Errorf("pake update: %w", err)
 		}
 	} else {
-		// Côté client : on lit d'abord ce que le host a déjà mis en file.
-		// Peut attendre si le host n'est pas encore arrivé côté relay.
+		// Client side: first read what the host has already queued.
+		// May block if the host hasn't reached the relay yet.
 		peer, err := readMsg(conn)
 		if err != nil {
 			return nil, "", fmt.Errorf("pake recv: %w", err)
@@ -138,10 +138,10 @@ func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn,
 		return nil, "", fmt.Errorf("session key: %w", err)
 	}
 
-	// Confirmation : chaque côté envoie un HMAC d'une chaîne fixe sous la clé
-	// dérivée. Si les codes diffèrent, les clés diffèrent, donc les HMAC aussi
-	// et la vérification échoue. C'est l'étape qui transforme PAKE en
-	// "authentification mutuelle qui rate proprement" en cas de mauvais code.
+	// Confirmation: each side sends an HMAC of a fixed string under the
+	// derived key. If the codes differ the keys differ, so the HMACs
+	// differ and the check fails. This turns PAKE into "mutual auth that
+	// fails cleanly" on a wrong code.
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("control-key-confirm-v1"))
 	myMAC := mac.Sum(nil)
@@ -163,8 +163,8 @@ func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn,
 			return nil, "", fmt.Errorf("confirm recv: %w", err)
 		}
 		if subtle.ConstantTimeCompare(myMAC, peerMAC) != 1 {
-			// Renvoyer quand même un MAC bidon pour que l'autre côté
-			// détecte aussi le mismatch et ferme proprement.
+			// Still send a dummy MAC so the other side also detects the
+			// mismatch and closes cleanly.
 			_ = writeMsg(conn, make([]byte, len(myMAC)))
 			return nil, "", ErrCodeMismatch
 		}
@@ -173,7 +173,7 @@ func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn,
 		}
 	}
 
-	// XChaCha20-Poly1305 demande une clé de 32 bytes ; on hash pour garantir la longueur.
+	// XChaCha20-Poly1305 needs a 32-byte key; hash to guarantee the length.
 	derived := sha256.Sum256(key)
 	aead, err := chacha20poly1305.NewX(derived[:])
 	if err != nil {
@@ -181,22 +181,22 @@ func Wrap(ctx context.Context, conn net.Conn, code []byte, role Role) (net.Conn,
 	}
 
 	fp := sha256.Sum256(append([]byte("control-fp:"), key...))
-	// Le handshake est terminé : on rétablit la conn sans deadline pour
-	// que le streaming ne timeout pas après HandshakeTimeout.
+	// Handshake done: clear the deadline so streaming doesn't time out
+	// after HandshakeTimeout.
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return nil, "", fmt.Errorf("clear handshake deadline: %w", err)
 	}
 	return &secureConn{Conn: conn, aead: aead}, hex.EncodeToString(fp[:8]), nil
 }
 
-// secureConn implémente net.Conn en chiffrant chaque Write en une frame
-// indépendante et en déchiffrant frame par frame côté Read.
+// secureConn implements net.Conn by encrypting each Write into an
+// independent frame and decrypting frame by frame on Read.
 type secureConn struct {
 	net.Conn
 	aead cipher.AEAD
 
 	readMu  sync.Mutex
-	readBuf []byte // reste d'une frame déchiffrée pas encore consommée
+	readBuf []byte // leftover of a decrypted frame not yet consumed
 
 	writeMu sync.Mutex
 }
@@ -231,7 +231,7 @@ func (c *secureConn) Write(p []byte) (int, error) {
 	defer c.writeMu.Unlock()
 
 	ns := c.aead.NonceSize()
-	chunkMax := maxFrame - ns - c.aead.Overhead() - 4 // -4 pour la longueur
+	chunkMax := maxFrame - ns - c.aead.Overhead() - 4 // -4 for the length prefix
 
 	sent := 0
 	for sent < len(p) {
@@ -255,7 +255,7 @@ func (c *secureConn) Write(p []byte) (int, error) {
 	return sent, nil
 }
 
-// writeMsg / readMsg : préfixe de longueur uint32 big-endian.
+// writeMsg / readMsg: big-endian uint32 length prefix.
 func writeMsg(w io.Writer, b []byte) error {
 	var l [4]byte
 	binary.BigEndian.PutUint32(l[:], uint32(len(b)))

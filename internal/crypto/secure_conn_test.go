@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// pipeConn enveloppe deux io.Pipes pour simuler une net.Conn en mémoire.
-// On l'utilise pour valider le handshake et le chiffrement sans réseau réel.
+// pipeConn wraps two io.Pipes to simulate a net.Conn in memory. Used to
+// validate the handshake and encryption without real networking.
 type pipeConn struct {
 	r *io.PipeReader
 	w *io.PipeWriter
@@ -70,8 +70,8 @@ func TestHandshakeAndRoundTrip(t *testing.T) {
 		t.Fatalf("fingerprint mismatch: host=%s client=%s", hostFP, clientFP)
 	}
 
-	// Round-trip dans les deux sens.
-	payload := make([]byte, 200000) // > maxFrame pour exercer le chunking
+	// Round-trip both ways.
+	payload := make([]byte, 200000) // > maxFrame to exercise chunking
 	if _, err := rand.Read(payload); err != nil {
 		t.Fatal(err)
 	}
@@ -114,10 +114,10 @@ func TestWrongCodeFails(t *testing.T) {
 	}()
 	wg.Wait()
 
-	// Le handshake PAKE doit échouer ou produire des clés différentes ;
-	// dans tous les cas, au moins un des deux côtés doit signaler une erreur
-	// au moment de Wrap ou la dérivation, OU le round-trip qui suit échoue.
-	// schollz/pake/v3 détecte la divergence et renvoie une erreur dans Update.
+	// The PAKE handshake must fail or produce different keys; either way,
+	// at least one of the two sides must surface an error during Wrap or
+	// key derivation, OR the round-trip that follows fails.
+	// schollz/pake/v3 detects the mismatch and returns an error in Update.
 	if hostErr == nil && clientErr == nil {
 		t.Fatal("expected at least one side to fail with mismatched codes")
 	}

@@ -62,7 +62,7 @@ func TestMaxWaitingRejects(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// 2 connexions avec des codes différents : doivent rester en attente.
+	// Two connections with different codes: both must stay pending.
 	for i, code := range []string{"code-1-aaa", "code-2-bbb"} {
 		c, _, err := websocket.Dial(ctx, wsURL, nil)
 		if err != nil {
@@ -74,7 +74,7 @@ func TestMaxWaitingRejects(t *testing.T) {
 		t.Cleanup(func() { _ = c.CloseNow() })
 	}
 
-	// 3ème connexion : doit être rejetée (cap atteint).
+	// Third connection: must be rejected (cap reached).
 	c, _, err := websocket.Dial(ctx, wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial 3: %v", err)
@@ -83,7 +83,7 @@ func TestMaxWaitingRejects(t *testing.T) {
 	if err := c.Write(ctx, websocket.MessageText, []byte("code-3-ccc")); err != nil {
 		t.Fatalf("hello 3: %v", err)
 	}
-	// Le serveur ferme la conn avec StatusTryAgainLater. Le prochain Read échoue.
+	// The server closes the conn with StatusTryAgainLater. The next Read fails.
 	_, _, err = c.Read(ctx)
 	if err == nil {
 		t.Fatal("expected close on 3rd connection (cap reached)")
@@ -102,7 +102,7 @@ func TestHelloRequired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	// On envoie du binaire au lieu de texte → le serveur doit refuser.
+	// Sending binary instead of text → the server must reject.
 	if err := c.Write(ctx, websocket.MessageBinary, []byte("nope")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
