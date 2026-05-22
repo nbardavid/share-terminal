@@ -1,19 +1,19 @@
-// Package host : côté hôte du partage de terminal (modèle tmate-style).
+// Package host: host side of the terminal sharing (tmate-style model).
 //
-// Une fois la net.Conn déjà chiffrée par internal/crypto, host.Run :
+// Given a net.Conn already encrypted by internal/crypto, host.Run:
 //
-//  1. lit la FrameMeta du client puis appelle OnPeerMeta pour le prompt y/N
-//  2. envoie sa propre FrameMeta (qui je suis, mode --write)
-//  3. attache le terminal du host (raw mode + dimensions) sauf si désactivé
-//  4. spawn $SHELL dans un PTY de taille initialement = celle du host
-//  5. fan-out PTY → (stdout host + conn en FrameData)
-//  6. pump host stdin → PTY (le host tape dans le shell partagé)
-//  7. pump conn → PTY (FrameInput si --write, FrameResize, FrameClose)
-//  8. réconcilie la taille PTY en min(host, client) sur tout SIGWINCH
+//  1. reads the client's FrameMeta then calls OnPeerMeta for the y/N prompt
+//  2. sends its own FrameMeta (who I am, --write mode)
+//  3. attaches the host terminal (raw mode + size) unless disabled
+//  4. spawns $SHELL in a PTY initially sized to the host
+//  5. fans PTY output out to (host stdout + conn as FrameData)
+//  6. pumps host stdin → PTY (the host types in the shared shell)
+//  7. pumps conn → PTY (FrameInput when --write, FrameResize, FrameClose)
+//  8. reconciles the PTY size to min(host, client) on every SIGWINCH
 //
-// Quand le shell se termine (`exit` / Ctrl+D) ou que la conn meurt, on
-// restaure le terminal AVANT de retourner pour que les messages de fin
-// s'affichent en mode ligne normal.
+// When the shell exits (`exit` / Ctrl+D) or the conn dies, we restore the
+// terminal BEFORE returning so that the goodbye messages render in normal
+// line mode.
 package host
 
 import (
@@ -35,33 +35,34 @@ import (
 )
 
 type Options struct {
-	// Write autorise la saisie clavier du client (FrameInput → PTY).
+	// Write allows client keyboard input (FrameInput → PTY).
 	Write bool
-	// Shell est le binaire shell à spawner. Si vide : $SHELL ou /bin/sh.
+	// Shell is the shell binary to spawn. If empty: $SHELL or /bin/sh.
 	Shell string
-	// OnPeerMeta est appelé avec la metadata du client juste après le handshake.
-	// Retourner false refuse la connexion (le host envoie un FrameClose et Run
-	// renvoie ErrPeerRefused). Si nil : on accepte sans prompt.
+	// OnPeerMeta is called with the client metadata right after the
+	// handshake. Returning false refuses the connection (the host sends a
+	// FrameClose and Run returns ErrPeerRefused). If nil: accept without a
+	// prompt.
 	OnPeerMeta func(proto.Meta) bool
-	// NoLocalAttach désactive l'attachement local (raw mode, fan-out vers
-	// stdout, pump stdin). Utilisé dans les tests qui n'ont pas de TTY.
-	// Par défaut (false), le terminal du host devient le shell partagé.
+	// NoLocalAttach disables local attachment (raw mode, fan-out to
+	// stdout, stdin pump). Used in tests that don't have a TTY. Default
+	// (false): the host's terminal becomes the shared shell.
 	NoLocalAttach bool
 }
 
-// ErrPeerRefused : OnPeerMeta a renvoyé false, le host a refusé le client.
+// ErrPeerRefused: OnPeerMeta returned false, the host refused the client.
 var ErrPeerRefused = errors.New("peer refused by host")
 
-// defaultSize : utilisé quand on tourne sans terminal local attaché.
+// defaultSize: used when running without a local terminal attached.
 var defaultSize = &pty.Winsize{Cols: 80, Rows: 24}
 
-// Run pilote la session côté host. Bloque jusqu'à la fin du shell ou de la conn.
+// Run drives the host-side session. Blocks until the shell or the conn ends.
 func Run(ctx context.Context, conn net.Conn, opts Options) error {
 	if err := exchangeMeta(conn, opts); err != nil {
 		return err
 	}
 
-	// Attache le terminal local du host (raw mode + lecture taille).
+	// Attach the host's local terminal (raw mode + size).
 	var localFD int
 	var localOldState *term.State
 	hostSize := *defaultSize
@@ -69,7 +70,7 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 	if !opts.NoLocalAttach {
 		localFD = int(os.Stdin.Fd())
 		if !term.IsTerminal(localFD) {
-			return errors.New("control share doit tourner dans un terminal interactif (stdin TTY)")
+			return errors.New("control share must run in an interactive terminal (stdin TTY)")
 		}
 		cols, rows, err := term.GetSize(localFD)
 		if err != nil {
@@ -83,16 +84,16 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 		}
 		localOldState = st
 	}
-	// Garanti : le terminal est restauré dans tous les chemins de sortie
-	// (return normal, panic, ctx cancel). Doit se faire AVANT toute écriture
-	// de message de fin sur stdout, donc on défère ici en tête de la fonction.
+	// Guaranteed: the terminal is restored on every exit path (normal
+	// return, panic, ctx cancel). Must happen BEFORE any goodbye message
+	// is written to stdout, so it's deferred at the top of the function.
 	defer func() {
 		if localOldState != nil {
 			_ = term.Restore(localFD, localOldState)
 		}
 	}()
 
-	// Spawn shell avec la taille initiale.
+	// Spawn the shell at the initial size.
 	shell := chooseShell(opts.Shell)
 	cmd := exec.CommandContext(ctx, shell)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
@@ -108,11 +109,11 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 		}
 	}()
 
-	// Gestionnaire de tailles : on garde host et client séparément et on
-	// applique min(host, client) au PTY à chaque changement.
+	// Size manager: keep host and client separately and apply
+	// min(host, client) to the PTY on every change.
 	sizeMgr := newSizeMgr(ptyFile, hostSize, hostSize)
 
-	// SIGWINCH côté host : si attaché localement.
+	// SIGWINCH on the host side: only when locally attached.
 	stopWinch := func() {}
 	if !opts.NoLocalAttach {
 		winch := make(chan os.Signal, 1)
@@ -130,11 +131,11 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 	}
 	defer stopWinch()
 
-	// Pumps. Quatre directions, donc quatre goroutines :
-	//   1) PTY → (stdout local + conn FrameData) — fan-out
-	//   2) stdin local → PTY (si attaché)
+	// Pumps. Four directions, so four goroutines:
+	//   1) PTY → (local stdout + conn FrameData) — fan-out
+	//   2) local stdin → PTY (when attached)
 	//   3) conn → PTY (FrameInput/FrameResize/FrameClose)
-	//   4) cmd.Wait (signal de fin "normale")
+	//   4) cmd.Wait ("normal" end signal)
 	ptyOutErr := make(chan error, 1)
 	go func() {
 		var localStdout io.Writer
@@ -152,8 +153,8 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 	stdinErr := make(chan error, 1)
 	if !opts.NoLocalAttach {
 		go func() {
-			// io.Copy de stdin vers le PTY. Quand le PTY se ferme (defer),
-			// la Write échoue et io.Copy retourne.
+			// io.Copy from stdin to the PTY. When the PTY closes (defer),
+			// the Write fails and io.Copy returns.
 			_, err := io.Copy(ptyFile, os.Stdin)
 			stdinErr <- err
 		}()
@@ -167,7 +168,7 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 		_ = proto.Write(conn, proto.FrameClose, nil)
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			return nil // exit non-zero du shell : normal
+			return nil // non-zero shell exit: normal
 		}
 		return err
 	case err := <-ptyOutErr:
@@ -182,7 +183,7 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 	}
 }
 
-// exchangeMeta : lit la meta du client, appelle OnPeerMeta, envoie notre meta.
+// exchangeMeta: read the client's meta, call OnPeerMeta, send ours.
 func exchangeMeta(conn net.Conn, opts Options) error {
 	t, payload, err := proto.Read(conn)
 	if err != nil {
@@ -215,8 +216,8 @@ func exchangeMeta(conn net.Conn, opts Options) error {
 	return nil
 }
 
-// ptyFanOut : lit le PTY et écrit chaque chunk sur localStdout (si non nil)
-// ET sur conn (FrameData). Boucle jusqu'à EOF ou erreur.
+// ptyFanOut reads the PTY and writes each chunk to localStdout (when
+// non-nil) AND to conn (FrameData). Loops until EOF or error.
 func ptyFanOut(ptyf *os.File, localStdout io.Writer, conn net.Conn) error {
 	buf := make([]byte, 32*1024)
 	for {
@@ -237,7 +238,7 @@ func ptyFanOut(ptyf *os.File, localStdout io.Writer, conn net.Conn) error {
 	}
 }
 
-// connToPTY : lit les frames du client et dispatch (input, resize, close).
+// connToPTY reads frames from the client and dispatches (input, resize, close).
 func connToPTY(conn net.Conn, ptyf *os.File, allowWrite bool, sizes *sizeMgr) error {
 	for {
 		t, payload, err := proto.Read(conn)
@@ -247,7 +248,7 @@ func connToPTY(conn net.Conn, ptyf *os.File, allowWrite bool, sizes *sizeMgr) er
 		switch t {
 		case proto.FrameInput:
 			if !allowWrite {
-				continue // ignoré silencieusement en read-only
+				continue // silently dropped in read-only mode
 			}
 			if _, err := ptyf.Write(payload); err != nil {
 				return err
@@ -261,12 +262,12 @@ func connToPTY(conn net.Conn, ptyf *os.File, allowWrite bool, sizes *sizeMgr) er
 		case proto.FrameClose:
 			return io.EOF
 		default:
-			// frames inconnues ignorées (compat ascendante)
+			// unknown frames ignored (forward compatibility)
 		}
 	}
 }
 
-// sizeMgr garde les tailles du host et du client et applique min() au PTY.
+// sizeMgr keeps host and client sizes and applies min() to the PTY.
 type sizeMgr struct {
 	mu     sync.Mutex
 	pty    *os.File

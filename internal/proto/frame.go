@@ -1,13 +1,13 @@
-// Package proto : framing typé du tunnel applicatif.
+// Package proto: typed framing for the application tunnel.
 //
-// Le canal chiffré (cf. internal/crypto) est un stream de bytes. Au-dessus,
-// on encode des frames typées :
+// The encrypted channel (see internal/crypto) is a byte stream. On top of
+// it we encode typed frames:
 //
 //	[1 byte type][4 bytes length BE][payload...]
 //
-// Types : FrameData (PTY → client), FrameInput (client → PTY, mode --write),
-// FrameResize (cols, rows), FrameMeta (metadata host → client), FrameClose
-// (close signalé).
+// Types: FrameData (PTY → client), FrameInput (client → PTY, in --write
+// mode), FrameResize (cols, rows), FrameMeta (host → client metadata),
+// FrameClose (signalled close).
 package proto
 
 import (
@@ -21,17 +21,17 @@ type FrameType uint8
 
 const (
 	FrameData   FrameType = 0x01 // PTY output (host → client)
-	FrameInput  FrameType = 0x02 // user keystrokes (client → host, si --write)
+	FrameInput  FrameType = 0x02 // user keystrokes (client → host, when --write)
 	FrameResize FrameType = 0x03 // {cols uint16, rows uint16}
-	FrameMeta   FrameType = 0x04 // metadata host → client (JSON court)
-	FrameClose  FrameType = 0x05 // sentinelle de fin
+	FrameMeta   FrameType = 0x04 // host → client metadata (short JSON)
+	FrameClose  FrameType = 0x05 // end-of-stream sentinel
 )
 
-// MaxPayload limite la taille d'un payload pour éviter qu'une frame foireuse
-// alloue des gigaoctets. PTY chunks dépasse rarement quelques Ko.
+// MaxPayload caps the payload size so a bogus frame can't allocate
+// gigabytes. PTY chunks rarely exceed a few KiB.
 const MaxPayload = 1 << 20 // 1 MiB
 
-// ResizePayload est le format wire d'une frame resize.
+// ResizePayload is the wire format of a resize frame.
 type ResizePayload struct {
 	Cols, Rows uint16
 }
@@ -53,7 +53,7 @@ func ParseResize(b []byte) (ResizePayload, error) {
 	}, nil
 }
 
-// Write encode et écrit une frame complète sur w.
+// Write encodes and writes a complete frame to w.
 func Write(w io.Writer, t FrameType, payload []byte) error {
 	if len(payload) > MaxPayload {
 		return fmt.Errorf("payload too large: %d > %d", len(payload), MaxPayload)
@@ -71,7 +71,7 @@ func Write(w io.Writer, t FrameType, payload []byte) error {
 	return err
 }
 
-// Read lit la prochaine frame depuis r.
+// Read reads the next frame from r.
 func Read(r io.Reader) (FrameType, []byte, error) {
 	var hdr [5]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
@@ -92,5 +92,5 @@ func Read(r io.Reader) (FrameType, []byte, error) {
 	return t, buf, nil
 }
 
-// ErrUnexpectedFrame est utile pour signaler qu'un type de frame n'était pas attendu dans ce contexte.
+// ErrUnexpectedFrame signals that a frame type was not expected in this context.
 var ErrUnexpectedFrame = errors.New("unexpected frame type")

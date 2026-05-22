@@ -15,12 +15,12 @@ import (
 	"github.com/nbardavid/control/internal/relay"
 )
 
-// TestEndToEnd : relay réel via httptest + host.Run (PTY + shell réels) +
-// un "test client" minimal qui parle directement le protocole. On lance une
-// commande "echo hello-control" via FrameInput et on vérifie qu'on récupère
-// la chaîne dans une FrameData.
+// TestEndToEnd: real relay via httptest + host.Run (real PTY + shell) + a
+// minimal "test client" that speaks the protocol directly. We run a
+// "printf CONTROL_OK" command via FrameInput and check the string comes
+// back in a FrameData.
 //
-// Ce test exerce tout : WS, splice du relay, PAKE, AEAD, framing, PTY.
+// This exercises the whole path: WS, relay splice, PAKE, AEAD, framing, PTY.
 func TestEndToEnd(t *testing.T) {
 	srv := httptest.NewServer(relay.NewServer())
 	defer srv.Close()
@@ -34,7 +34,7 @@ func TestEndToEnd(t *testing.T) {
 	clientDone := make(chan error, 1)
 	collected := make(chan []byte, 1)
 
-	// Host : se connecte, dit hello, wrap, host.Run avec --write activé.
+	// Host: connect, send hello, wrap, host.Run with --write enabled.
 	go func() {
 		hostDone <- func() error {
 			ws, _, err := websocket.Dial(ctx, wsURL, nil)
@@ -52,13 +52,13 @@ func TestEndToEnd(t *testing.T) {
 			return host.Run(ctx, secure, host.Options{
 				Write:         true,
 				Shell:         "/bin/sh",
-				NoLocalAttach: true, // pas de TTY dans le test runner
+				NoLocalAttach: true, // no TTY in the test runner
 				OnPeerMeta:    func(_ proto.Meta) bool { return true },
 			})
 		}()
 	}()
 
-	// Client : connecte, hello, wrap, lit meta, envoie une commande, lit la sortie.
+	// Client: connect, hello, wrap, read meta, send a command, read the output.
 	go func() {
 		clientDone <- func() error {
 			ws, _, err := websocket.Dial(ctx, wsURL, nil)
@@ -74,14 +74,14 @@ func TestEndToEnd(t *testing.T) {
 				return err
 			}
 
-			// 1. Envoyer notre meta (client → host) en premier.
+			// 1. Send our meta (client → host) first.
 			myMeta := proto.Meta{User: "alice", Host: "test-client"}
 			mb, _ := myMeta.Bytes()
 			if err := proto.Write(secure, proto.FrameMeta, mb); err != nil {
 				return err
 			}
 
-			// 2. Lire la meta du host (host accepte et envoie sa meta).
+			// 2. Read the host meta (host accepts and sends its meta).
 			ft, payload, err := proto.Read(secure)
 			if err != nil {
 				return err
@@ -97,19 +97,19 @@ func TestEndToEnd(t *testing.T) {
 				t.Errorf("expected Write=true in meta")
 			}
 
-			// 3. Envoyer une taille initiale (utile pour /bin/sh).
+			// 3. Send an initial size (helps /bin/sh).
 			rs := proto.ResizePayload{Cols: 80, Rows: 24}
 			if err := proto.Write(secure, proto.FrameResize, rs.Bytes()); err != nil {
 				return err
 			}
 
-			// 4. Envoyer une commande qui produit une sortie identifiable + exit.
+			// 4. Send a command that produces identifiable output, then exit.
 			cmd := "printf 'CONTROL_OK\\n'; exit\n"
 			if err := proto.Write(secure, proto.FrameInput, []byte(cmd)); err != nil {
 				return err
 			}
 
-			// 5. Lire jusqu'à voir CONTROL_OK ou jusqu'à FrameClose.
+			// 5. Read until CONTROL_OK appears or FrameClose arrives.
 			var buf bytes.Buffer
 			for {
 				ft, payload, err := proto.Read(secure)
@@ -145,7 +145,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("timeout: %v", ctx.Err())
 	}
 
-	// Cleanup : attendre les goroutines (avec timeout court).
+	// Cleanup: wait on the goroutines (short timeout).
 	cancel()
 	timeout := time.After(2 * time.Second)
 	for i := 0; i < 2; i++ {
@@ -153,7 +153,7 @@ func TestEndToEnd(t *testing.T) {
 		case <-hostDone:
 		case <-clientDone:
 		case <-timeout:
-			return // pas grave, le test principal est passé
+			return // not a problem, the main test already passed
 		}
 	}
 }

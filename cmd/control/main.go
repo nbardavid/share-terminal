@@ -1,17 +1,17 @@
-// control : CLI client pour partager (`share`) ou rejoindre (`join`) un
-// terminal via un relay.
+// control: CLI client to share (`share`) or join (`join`) a terminal
+// through a relay.
 //
-// Usage rapide :
+// Quick usage:
 //
-//	control share              # partage ton terminal (lecture seule)
-//	control share -w           # autorise le client à taper aussi
-//	control join CODE          # rejoint un terminal partagé
+//	control share              # share your terminal (read-only)
+//	control share -w           # let the client type as well
+//	control join CODE          # join a shared terminal
 //
-// Choix du relay (par ordre de priorité) :
+// Relay selection (priority order):
 //
 //	--relay / -r URL
 //	$CONTROL_RELAY
-//	ws://localhost:8080         (défaut, pour dev local)
+//	ws://localhost:8080         (default, for local dev)
 package main
 
 import (
@@ -36,37 +36,37 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version est injectée au build via ldflags ("-X main.version=v0.1.0").
-// Valeur par défaut "dev" pour les builds locaux.
+// version is injected at build time via ldflags ("-X main.version=v0.1.0").
+// Defaults to "dev" for local builds.
 var version = "dev"
 
-// defaultRelay est l'URL utilisée si ni --relay ni $CONTROL_RELAY ne sont
-// fournis. Surchargeable au build pour shipper un binaire qui pointe
-// directement vers un relay précis (typiquement le tien) :
+// defaultRelay is the URL used when neither --relay nor $CONTROL_RELAY are
+// provided. Can be overridden at build time to ship a binary that points
+// directly at a specific relay (typically your own):
 //
-//	go build -ldflags "-X main.defaultRelay=wss://relay.toi.com" ./cmd/control
+//	go build -ldflags "-X main.defaultRelay=wss://relay.example.com" ./cmd/control
 //
-// Note sécurité : hardcoder une URL ici n'affaiblit pas le chiffrement.
-// Le relay est UNTRUSTED par construction (PAKE + E2E AEAD), il ne voit
-// jamais le clair. Le seul vrai risque c'est l'availability : si ton VPS
-// tombe, le binaire ne peut plus établir de session sans override --relay.
+// Security note: hardcoding a URL here does not weaken encryption. The relay
+// is UNTRUSTED by construction (PAKE + E2E AEAD), it never sees plaintext.
+// The only real risk is availability: if the VPS goes down, the binary can
+// no longer establish a session without a --relay override.
 var defaultRelay = "ws://localhost:8080"
 
 func main() {
 	root := &cobra.Command{
 		Use:     "control",
-		Short:   "Partage de terminal CLI via relay (E2E chiffré).",
+		Short:   "CLI terminal sharing through a relay (E2E encrypted).",
 		Version: version,
-		Long: `control partage interactivement un terminal entre deux machines via un
-relay. Inspiré de croc (pairing par code 3 mots) et de tmate (le host
-voit son propre shell, le client le suit en temps réel).
+		Long: `control shares an interactive terminal between two machines through a
+relay. Inspired by croc (3-word pairing code) and tmate (the host sees
+its own shell, the client follows in real time).
 
-Le relay est choisi dans cet ordre :
+The relay is selected in this order:
   --relay / -r URL  >  $CONTROL_RELAY  >  ` + defaultRelay,
 	}
 	root.AddCommand(newShareCmd(), newJoinCmd(), newUpdateCmd())
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "erreur:", err)
+		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
@@ -76,7 +76,7 @@ Le relay est choisi dans cet ordre :
 func newUpdateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "update",
-		Short: "Met à jour control depuis la dernière GitHub Release.",
+		Short: "Update control from the latest GitHub Release.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -93,7 +93,7 @@ func newShareCmd() *cobra.Command {
 	var insecure bool
 	cmd := &cobra.Command{
 		Use:   "share",
-		Short: "Partage ton terminal — affiche un code à transmettre.",
+		Short: "Share your terminal — prints a code to hand off.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			relay = resolveRelay(relay)
 			if err := validateRelayURL(relay, insecure); err != nil {
@@ -101,19 +101,19 @@ func newShareCmd() *cobra.Command {
 			}
 
 			code := pairing.Generate()
-			fmt.Printf("\n🔗  Code de partage :  \x1b[1m%s\x1b[0m\n", code)
-			fmt.Printf("    (à transmettre à la personne qui se connecte)\n\n")
+			fmt.Printf("\nShare code:  \x1b[1m%s\x1b[0m\n", code)
+			fmt.Printf("    (hand this off to whoever is connecting)\n\n")
 			if write {
-				fmt.Printf("    Mode : \x1b[33mLECTURE + ÉCRITURE\x1b[0m  (le client peut taper au clavier)\n")
+				fmt.Printf("    Mode: \x1b[33mREAD + WRITE\x1b[0m  (the client can type)\n")
 			} else {
-				fmt.Printf("    Mode : LECTURE SEULE  (-w pour autoriser la saisie)\n")
+				fmt.Printf("    Mode: READ-ONLY  (-w to allow input)\n")
 			}
-			fmt.Printf("    Le code expire dans 10 minutes.\n\n")
+			fmt.Printf("    The code expires in 10 minutes.\n\n")
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			fmt.Print("⠋ En attente d'un peer...\n")
+			fmt.Print("Waiting for a peer...\n")
 			conn, err := dialRelay(ctx, relay, code)
 			if err != nil {
 				return err
@@ -123,24 +123,24 @@ func newShareCmd() *cobra.Command {
 			secure, fp, err := crypto.Wrap(ctx, conn, []byte(code), crypto.RoleHost)
 			if err != nil {
 				if errors.Is(err, crypto.ErrCodeMismatch) {
-					return errors.New("le peer a fourni un mauvais code")
+					return errors.New("peer provided the wrong code")
 				}
 				return fmt.Errorf("handshake: %w", err)
 			}
-			fmt.Printf("✓ Peer apparié (empreinte \x1b[2m%s\x1b[0m)\n", fp)
+			fmt.Printf("Peer paired (fingerprint \x1b[2m%s\x1b[0m)\n", fp)
 
 			opts := host.Options{
 				Write: write,
 				OnPeerMeta: func(m proto.Meta) bool {
-					fmt.Printf("  Demande de connexion : \x1b[1m%s@%s\x1b[0m\n", m.User, m.Host)
-					fmt.Print("  Accepter ? [y/N] ")
+					fmt.Printf("  Connection request: \x1b[1m%s@%s\x1b[0m\n", m.User, m.Host)
+					fmt.Print("  Accept? [y/N] ")
 					reader := bufio.NewReader(os.Stdin)
 					line, _ := reader.ReadString('\n')
 					ok := strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y")
 					if ok {
-						fmt.Print("\n  Le shell démarre. `exit` ou Ctrl+D pour terminer.\n\n")
+						fmt.Print("\n  Shell starting. `exit` or Ctrl+D to end.\n\n")
 					} else {
-						fmt.Println("  Refusé.")
+						fmt.Println("  Refused.")
 					}
 					return ok
 				},
@@ -152,9 +152,9 @@ func newShareCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVarP(&relay, "relay", "r", "", "URL du relay (défaut: $CONTROL_RELAY ou "+defaultRelay+")")
-	cmd.Flags().BoolVarP(&write, "write", "w", false, "Autoriser le client à saisir au clavier")
-	cmd.Flags().BoolVar(&insecure, "insecure", false, "Autoriser ws:// non chiffré vers un hôte non-local")
+	cmd.Flags().StringVarP(&relay, "relay", "r", "", "Relay URL (default: $CONTROL_RELAY or "+defaultRelay+")")
+	cmd.Flags().BoolVarP(&write, "write", "w", false, "Allow the client to type")
+	cmd.Flags().BoolVar(&insecure, "insecure", false, "Allow unencrypted ws:// to a non-local host")
 	return cmd
 }
 
@@ -165,7 +165,7 @@ func newJoinCmd() *cobra.Command {
 	var insecure bool
 	cmd := &cobra.Command{
 		Use:   "join <code>",
-		Short: "Rejoint un terminal partagé via son code.",
+		Short: "Join a shared terminal by code.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			relay = resolveRelay(relay)
@@ -175,13 +175,13 @@ func newJoinCmd() *cobra.Command {
 
 			code, err := pairing.Normalize(args[0])
 			if err != nil {
-				return fmt.Errorf("code invalide : %w", err)
+				return fmt.Errorf("invalid code: %w", err)
 			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			fmt.Println("⠋ Connexion au relay...")
+			fmt.Println("Connecting to relay...")
 			conn, err := dialRelay(ctx, relay, code)
 			if err != nil {
 				return err
@@ -191,42 +191,42 @@ func newJoinCmd() *cobra.Command {
 			secure, fp, err := crypto.Wrap(ctx, conn, []byte(code), crypto.RoleClient)
 			if err != nil {
 				if errors.Is(err, crypto.ErrCodeMismatch) {
-					return errors.New("code incorrect — la clé dérivée ne correspond pas à celle du host")
+					return errors.New("wrong code — derived key does not match the host's")
 				}
 				return fmt.Errorf("handshake: %w", err)
 			}
 
 			opts := client.Options{
 				OnMeta: func(m proto.Meta) {
-					mode := "lecture seule"
+					mode := "read-only"
 					if m.Write {
-						mode = "lecture + écriture"
+						mode = "read + write"
 					}
-					fmt.Printf("✓ Apparié avec \x1b[1m%s@%s\x1b[0m (empreinte \x1b[2m%s\x1b[0m)\n", m.User, m.Host, fp)
-					fmt.Printf("  Mode : %s · Quitter : Ctrl+]\n\n", mode)
+					fmt.Printf("Paired with \x1b[1m%s@%s\x1b[0m (fingerprint \x1b[2m%s\x1b[0m)\n", m.User, m.Host, fp)
+					fmt.Printf("  Mode: %s · Quit: Ctrl+]\n\n", mode)
 				},
 			}
 			err = client.Run(ctx, secure, opts)
 			switch {
 			case errors.Is(err, client.ErrUserQuit):
-				fmt.Println("\nDéconnecté.")
+				fmt.Println("\nDisconnected.")
 				return nil
 			case errors.Is(err, client.ErrRefused):
-				fmt.Println("\nLe host a refusé la connexion.")
+				fmt.Println("\nHost refused the connection.")
 				return nil
 			default:
 				return err
 			}
 		},
 	}
-	cmd.Flags().StringVarP(&relay, "relay", "r", "", "URL du relay (défaut: $CONTROL_RELAY ou "+defaultRelay+")")
-	cmd.Flags().BoolVar(&insecure, "insecure", false, "Autoriser ws:// non chiffré vers un hôte non-local")
+	cmd.Flags().StringVarP(&relay, "relay", "r", "", "Relay URL (default: $CONTROL_RELAY or "+defaultRelay+")")
+	cmd.Flags().BoolVar(&insecure, "insecure", false, "Allow unencrypted ws:// to a non-local host")
 	return cmd
 }
 
 // --- helpers ---
 
-// resolveRelay implémente la cascade flag > env > défaut.
+// resolveRelay applies the flag > env > default cascade.
 func resolveRelay(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
@@ -237,9 +237,9 @@ func resolveRelay(flagValue string) string {
 	return defaultRelay
 }
 
-// isLocalHost retourne true si l'URL pointe vers la machine locale.
-// Dans ce cas on autorise ws:// sans --insecure (pas de risque réseau).
-// 0.0.0.0 est exclu : c'est une adresse de bind, pas une cible de connect.
+// isLocalHost reports whether the URL points to the local machine. In that
+// case ws:// is allowed without --insecure (no network risk). 0.0.0.0 is
+// excluded: it's a bind address, not a connect target.
 func isLocalHost(host string) bool {
 	if host == "" {
 		return false
@@ -247,7 +247,7 @@ func isLocalHost(host string) bool {
 	if i := strings.LastIndex(host, ":"); i >= 0 {
 		host = host[:i]
 	}
-	host = strings.ToLower(strings.Trim(host, "[]")) // gère [::1]:port
+	host = strings.ToLower(strings.Trim(host, "[]")) // handle [::1]:port
 	switch host {
 	case "localhost", "127.0.0.1", "::1":
 		return true
@@ -258,7 +258,7 @@ func isLocalHost(host string) bool {
 func validateRelayURL(s string, allowInsecure bool) error {
 	u, err := url.Parse(s)
 	if err != nil {
-		return fmt.Errorf("URL relay invalide : %w", err)
+		return fmt.Errorf("invalid relay URL: %w", err)
 	}
 	switch u.Scheme {
 	case "wss":
@@ -267,14 +267,14 @@ func validateRelayURL(s string, allowInsecure bool) error {
 		if allowInsecure || isLocalHost(u.Host) {
 			return nil
 		}
-		return fmt.Errorf("ws:// non chiffré vers %s — utilise wss:// ou ajoute --insecure si c'est volontaire", u.Host)
+		return fmt.Errorf("unencrypted ws:// to %s — use wss:// or pass --insecure if this is intentional", u.Host)
 	default:
-		return fmt.Errorf("scheme inattendu %q (utilise ws:// ou wss://)", u.Scheme)
+		return fmt.Errorf("unexpected scheme %q (use ws:// or wss://)", u.Scheme)
 	}
 }
 
-// dialRelay ouvre une connexion WebSocket au relay, envoie le code comme
-// premier message texte ("hello"), et retourne la conn adaptée en net.Conn.
+// dialRelay opens a WebSocket connection to the relay, sends the code as
+// the first text message ("hello"), and returns the conn adapted to net.Conn.
 func dialRelay(ctx context.Context, relayURL, code string) (net.Conn, error) {
 	if !strings.HasSuffix(relayURL, "/ws") {
 		relayURL = strings.TrimRight(relayURL, "/") + "/ws"
@@ -283,8 +283,8 @@ func dialRelay(ctx context.Context, relayURL, code string) (net.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial relay: %w", err)
 	}
-	// Doit être >= la taille max d'une frame AEAD (~64 KiB) émise par
-	// internal/crypto. 1 MiB laisse une marge confortable.
+	// Must be >= the max AEAD frame size (~64 KiB) emitted by
+	// internal/crypto. 1 MiB leaves a comfortable margin.
 	wsConn.SetReadLimit(1 << 20)
 	if err := wsConn.Write(ctx, websocket.MessageText, []byte(code)); err != nil {
 		_ = wsConn.Close(websocket.StatusInternalError, "hello write failed")

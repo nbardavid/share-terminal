@@ -5,10 +5,10 @@ on:
     tags:
       - 'v*'
 
-# Cross-compile pour Linux + macOS (amd64 et arm64), crée une GitHub Release
-# avec les 8 binaires + un checksums.txt. Le binaire `control` est buildé
-# avec DEFAULT_RELAY hardcodé via ldflags pour qu'il pointe directement vers
-# ton VPS — édite la valeur ci-dessous AVANT de tagger la première release.
+# Cross-compile for Linux + macOS (amd64 and arm64), publish a GitHub Release
+# with the 8 binaries plus a checksums.txt. The `control` binary is built
+# with DEFAULT_RELAY hardcoded via ldflags so it points straight at your
+# VPS — edit the value below BEFORE tagging the first release.
 
 env:
   DEFAULT_RELAY: wss://relay.nbardavid.dev
@@ -32,7 +32,7 @@ jobs:
           go-version: '1.22'
           cache: true
 
-      - name: Build binaires
+      - name: Build binaries
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -42,13 +42,13 @@ jobs:
           VERSION="${GITHUB_REF#refs/tags/}"
           mkdir -p dist
 
-          # control : binaire client. ldflags injecte la version + l'URL du relay.
+          # control: client binary. ldflags injects the version + the relay URL.
           go build -trimpath \
             -ldflags="-s -w -X main.version=${VERSION} -X main.defaultRelay=${DEFAULT_RELAY}" \
             -o "dist/control-${GOOS}-${GOARCH}" \
             ./cmd/control
 
-          # control-relay : binaire serveur. Pas besoin de defaultRelay côté serveur.
+          # control-relay: server binary. No defaultRelay needed on the server side.
           go build -trimpath \
             -ldflags="-s -w -X main.version=${VERSION}" \
             -o "dist/control-relay-${GOOS}-${GOARCH}" \

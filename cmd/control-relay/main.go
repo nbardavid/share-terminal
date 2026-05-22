@@ -1,10 +1,10 @@
-// control-relay : serveur d'appariement pour `control share` / `control join`.
+// control-relay: pairing server for `control share` / `control join`.
 //
-// Usage :
+// Usage:
 //
-//	control-relay              # écoute sur :8080
-//	control-relay :443         # écoute sur :443
-//	control-relay 9000         # écoute sur :9000 (port nu accepté)
+//	control-relay              # listen on :8080
+//	control-relay :443         # listen on :443
+//	control-relay 9000         # listen on :9000 (bare port accepted)
 //	control-relay :443 --tls-cert cert.pem --tls-key key.pem
 package main
 
@@ -25,16 +25,16 @@ import (
 	"github.com/nbardavid/control/internal/relay"
 )
 
-// version est injectée au build via ldflags.
+// version is injected at build time via ldflags.
 var version = "dev"
 
 func main() {
-	certFile := flag.String("tls-cert", "", "fichier de certificat TLS (active TLS si fourni)")
-	keyFile := flag.String("tls-key", "", "fichier de clé privée TLS")
-	showVersion := flag.Bool("version", false, "affiche la version et quitte")
+	certFile := flag.String("tls-cert", "", "TLS certificate file (enables TLS when provided)")
+	keyFile := flag.String("tls-key", "", "TLS private key file")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [port] [--tls-cert FILE --tls-key FILE]\n", os.Args[0])
-		fmt.Fprintln(os.Stderr, "  port : :8080 (défaut), :443, 9000, ...")
+		fmt.Fprintln(os.Stderr, "  port: :8080 (default), :443, 9000, ...")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -90,9 +90,9 @@ func main() {
 	_ = httpSrv.Shutdown(shutdownCtx)
 }
 
-// normalizeAddr accepte "8080", ":8080", "127.0.0.1:8080" et renvoie une
-// forme valide pour net.Listen ("[host]:port"). Permet d'écrire juste un
-// numéro de port au lieu de `:8080`.
+// normalizeAddr accepts "8080", ":8080", "127.0.0.1:8080" and returns a
+// form valid for net.Listen ("[host]:port"). Lets the user pass a bare
+// port number instead of `:8080`.
 func normalizeAddr(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {

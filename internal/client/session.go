@@ -1,15 +1,15 @@
-// Package client : côté client du partage de terminal.
+// Package client: client side of the terminal sharing.
 //
-// Une fois la net.Conn déjà chiffrée par internal/crypto, client.Run :
+// Given a net.Conn already encrypted by internal/crypto, client.Run:
 //
-//  1. lit la frame Meta envoyée par le host et la retourne via le callback OnMeta
-//  2. passe stdin en raw mode
-//  3. envoie la taille initiale du terminal (FrameResize)
-//  4. boucle conn -> stdout (frames FrameData)
-//  5. boucle stdin -> conn (frames FrameInput) ; détecte Ctrl+] pour quitter
-//  6. relaie SIGWINCH côté local en frames FrameResize
+//  1. reads the Meta frame sent by the host and returns it via OnMeta
+//  2. puts stdin into raw mode
+//  3. sends the initial terminal size (FrameResize)
+//  4. loops conn -> stdout (FrameData frames)
+//  5. loops stdin -> conn (FrameInput frames); detects Ctrl+] to quit
+//  6. relays local SIGWINCH as FrameResize frames
 //
-// Le terminal est restauré dans tous les chemins de sortie (defer Restore).
+// The terminal is restored on every exit path (defer Restore).
 package client
 
 import (
@@ -27,31 +27,32 @@ import (
 	"golang.org/x/term"
 )
 
-// ctrlBracket : Ctrl+] — séquence d'échappement pour quitter proprement.
+// ctrlBracket: Ctrl+] — escape sequence to quit cleanly.
 const ctrlBracket = 0x1d
 
 type Options struct {
-	// OnMeta est appelé une fois après réception de la metadata du host
-	// (donc une fois que le host a accepté la connexion).
+	// OnMeta is called once, after receiving the host's metadata (i.e.
+	// once the host has accepted the connection).
 	OnMeta func(proto.Meta)
 }
 
-// ErrUserQuit : l'utilisateur a tapé Ctrl+], pas une vraie erreur.
+// ErrUserQuit: the user pressed Ctrl+], not a real error.
 var ErrUserQuit = errors.New("user quit (Ctrl+])")
 
-// ErrRefused : le host a refusé la connexion (a renvoyé un FrameClose
-// au lieu de sa metadata).
+// ErrRefused: the host refused the connection (sent a FrameClose instead
+// of its metadata).
 var ErrRefused = errors.New("host refused the connection")
 
-// Run pilote la session côté client jusqu'à déconnexion (host close,
-// Ctrl+], conn morte). Le terminal est restauré à l'état initial à la sortie.
+// Run drives the client-side session until disconnect (host close,
+// Ctrl+], dead conn). The terminal is restored to its initial state on
+// return.
 //
-// Séquence protocolaire :
-//  1. Le client envoie d'abord sa FrameMeta (qui il est).
-//  2. Le host répond soit FrameMeta (accepté) soit FrameClose (refusé).
-//  3. Le streaming commence.
+// Protocol sequence:
+//  1. The client sends its FrameMeta first (who it is).
+//  2. The host replies with either FrameMeta (accepted) or FrameClose (refused).
+//  3. Streaming begins.
 func Run(ctx context.Context, conn net.Conn, opts Options) error {
-	// 1. Envoyer notre meta en premier.
+	// 1. Send our meta first.
 	me, err := selfMeta()
 	if err != nil {
 		return fmt.Errorf("collect self meta: %w", err)
@@ -64,7 +65,7 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 		return fmt.Errorf("send meta: %w", err)
 	}
 
-	// 2. Attendre la réponse du host.
+	// 2. Wait for the host's reply.
 	t, payload, err := proto.Read(conn)
 	if err != nil {
 		return fmt.Errorf("read host meta: %w", err)
@@ -83,10 +84,10 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 		opts.OnMeta(meta)
 	}
 
-	// 2. Raw mode sur stdin (avec restore garanti).
+	// 2. Raw mode on stdin (with guaranteed restore).
 	stdinFd := int(os.Stdin.Fd())
 	if !term.IsTerminal(stdinFd) {
-		return errors.New("stdin n'est pas un terminal — control join doit tourner dans un vrai TTY")
+		return errors.New("stdin is not a terminal — control join must run in a real TTY")
 	}
 	oldState, err := term.MakeRaw(stdinFd)
 	if err != nil {
@@ -94,7 +95,7 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 	}
 	defer func() { _ = term.Restore(stdinFd, oldState) }()
 
-	// 3. Envoyer la taille initiale.
+	// 3. Send the initial size.
 	if err := sendCurrentSize(conn, stdinFd); err != nil {
 		return err
 	}
@@ -120,7 +121,7 @@ func Run(ctx context.Context, conn net.Conn, opts Options) error {
 	case err := <-connErr:
 		return ignoreEOF(err)
 	case err := <-stdinErr:
-		// Politesse : on prévient le host qu'on s'en va.
+		// Courtesy: let the host know we're leaving.
 		_ = proto.Write(conn, proto.FrameClose, nil)
 		return err
 	case <-ctx.Done():
@@ -151,9 +152,9 @@ func connToStdout(conn net.Conn) error {
 		case proto.FrameClose:
 			return io.EOF
 		case proto.FrameMeta:
-			// Le host peut renvoyer meta si le mode change ; on ignore au MVP.
+			// The host may resend meta if the mode changes; ignored in MVP.
 		default:
-			// Frames inconnues : ignorées (compat ascendante).
+			// Unknown frames: ignored (forward compatibility).
 		}
 	}
 }
@@ -163,9 +164,9 @@ func stdinToConn(conn net.Conn) error {
 	for {
 		n, err := os.Stdin.Read(buf)
 		if n > 0 {
-			// Détection Ctrl+] : on regarde si la séquence est présente.
-			// En raw mode, chaque keypress arrive comme un ou quelques bytes,
-			// donc une comparaison directe suffit.
+			// Ctrl+] detection: check whether the byte appears in the chunk.
+			// In raw mode every keypress arrives as one or a few bytes, so a
+			// direct comparison is enough.
 			if hasByte(buf[:n], ctrlBracket) {
 				return ErrUserQuit
 			}
