@@ -1,12 +1,12 @@
-# Binaires compilés
+# Compiled binaries
 /bin/
 *.test
 *.out
 
-# Couverture
+# Coverage
 coverage.txt
 
-# Éditeurs
+# Editors
 .vscode/
 .idea/
 *.swp
